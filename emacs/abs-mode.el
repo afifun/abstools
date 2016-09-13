@@ -73,10 +73,11 @@ executable via the `-cp' argument."
 (put 'abs-indent 'safe-local-variable 'integerp)
 
 (defcustom abs-use-timed-interpreter nil
-  "Control whether to compile Abs code using the timed interpreter by default.
-This influences the default compilation command executed by
-\\[abs-next-action].  Note that you can set this variable as a
-file-local variable as well."
+  "Control whether Abs code uses the timed Maude interpreter by default.
+This option influences the Maude backend only.  Note that if
+`abs-clock-limit' is set as a buffer-local variable, for example
+via \\[add-file-local-variable], the timed interpreter will be
+used regardless of the value of `abs-use-timed-interpreter'."
   :type 'boolean
   :group 'abs)
 (put 'abs-use-timed-interpreter 'safe-local-variable 'booleanp)
@@ -94,23 +95,32 @@ Note that you can set this variable as a file-local variable as well."
   :group 'abs)
 (put 'abs-clock-limit 'safe-local-variable 'integerp)
 
+(defcustom abs-local-port nil
+  "Port where to start the REST API / visualization server (Erlang backend).
+Server will not be started if nil."
+  :type 'integer
+  :group 'abs)
+(put 'abs-local-port 'safe-local-variable 'integerp)
+
 (defcustom abs-default-resourcecost 0
   "Default resource cost of executing one ABS statement in the timed interpreter."
   :type 'integer
   :group 'abs)
 (put 'abs-default-resourcecost 'safe-local-variable 'integerp)
 
+(defcustom abs-link-source-path nil
+  "Path to link the ABS runtime sources for the erlang backend.
+This enables development of the erlang backend by symlinking its
+sources into the generated code.  Sources will not be linked if
+NIL."
+  :type '(choice (const :tag "Do not link" nil)
+                 directory)
+  :group 'abs)
+(put 'abs-link-source-path 'safe-local-variable '(lambda (x) (or (null x) (stringp x))))
+
 (defvar abs-product-name nil
   "Product to be generated when compiling.")
 (put 'abs-product-name 'safe-local-variable 'stringp)
-
-(defcustom abs-debug-output nil
-  "Control whether to tell the backend to be verbose.
-This setting might not be supported on all backends, or produce
-different results."
-  :type 'boolean
-  :group 'abs)
-(put 'abs-debug-output 'safe-local-variable 'booleanp)
 
 ;;; Making faces
 (defface abs-keyword-face '((default (:inherit font-lock-keyword-face)))
@@ -294,11 +304,15 @@ value.")
 ;;; Put the regular expression for finding error messages here.
 ;;;
 (defconst abs-error-regexp
-  "^[^\0-@]+ \"\\(^\"\n]+\\)\", [^\0-@]+ \\([0-9]+\\)[-,:]"
+  "^[^\0-@]+ \"\\(^\"\n]+\\)\", [^\0-@]+ \\([0-9]+\\)[-,:]\\([0-9]+\\)[-,:]\\([Ww]arning\\)?"
   "Regular expression matching the error messages produced by the abs compiler.")
 
-(unless (assoc abs-error-regexp compilation-error-regexp-alist)
-  (add-to-list 'compilation-error-regexp-alist (list abs-error-regexp 1 2)))
+(unless (member 'abs compilation-error-regexp-alist)
+  (add-to-list 'compilation-error-regexp-alist 'abs t))
+
+(unless (assoc 'abs compilation-error-regexp-alist-alist)
+  (add-to-list 'compilation-error-regexp-alist-alist
+               (list 'abs abs-error-regexp 1 2 3 '(4))))
 
 ;;; flymake support
 (defun abs-flymake-init ()
@@ -342,7 +356,7 @@ value.")
   (save-excursion
     (goto-char (point-max))
     (re-search-backward (rx bol (* whitespace) "module" (1+ whitespace)
-                            (group (char upper) (* (or (char alnum) ".")))))
+                            (group (char upper) (* (or (char alnum) "." "_")))))
     (buffer-substring-no-properties (match-beginning 1) (match-end 1))))
 
 (defun abs--calculate-compile-command (backend)
@@ -360,20 +374,24 @@ value.")
                      (concat " -o \"" (abs--keyabs-filename) "\""))
                    (when abs-product-name
                      (concat " -product=" abs-product-name))
-                   (when (and (eql backend 'maude) abs-use-timed-interpreter)
+                   (when (and (eql backend 'maude)
+                              (or abs-use-timed-interpreter
+                                  (local-variable-p 'abs-clock-limit)))
                      (concat " -timed -limit="
                              (number-to-string abs-clock-limit)))
                    (when (and (eql backend 'maude)
                               (< 0 abs-default-resourcecost))
                      (concat " -defaultcost="
                              (number-to-string abs-default-resourcecost)))
+                   (when (and (eq backend 'erlang) abs-link-source-path)
+                     (concat " && cd gen/erl/ && ./link_sources " abs-link-source-path))
                    " "))))
 
 (defun abs--needs-compilation (backend)
   (let* ((abs-output-file
           (abs--absolutify-filename (pcase backend
                                       (`maude (abs--maude-filename))
-                                      (`erlang "gen/erl/Emakefile")
+                                      (`erlang "gen/erl/absmodel/Emakefile")
                                       (`java "gen/ABS/StdLib/Bool.java")
                                       ;; FIXME Prolog backend can use -fn outfile
                                       (`prolog "abs.pl")
@@ -397,39 +415,48 @@ value.")
   (pcase backend
     (`maude (save-excursion (run-maude))
             (comint-send-string inferior-maude-buffer
-                                (concat "in "
+                                (concat "in \""
                                         (abs--absolutify-filename
                                          (abs--maude-filename))
-                                        "\n"))
+                                        "\"\n"))
             (with-current-buffer inferior-maude-buffer
               (sit-for 1)
               (goto-char (point-max))
               (insert "frew start .")
               (comint-send-input)))
-    (`erlang (let ((erlang-buffer (or (get-buffer "*erlang*")
-                                      (progn (save-excursion
-                                               ;; don't propagate
-                                               ;; interactive args, if any
-                                               (inferior-erlang nil))
-                                             (get-buffer "*erlang*"))))
+    (`erlang (let ((erlang-buffer (progn
+                                    (when (get-buffer "*erlang*")
+                                      (kill-buffer (get-buffer "*erlang*")))
+                                    (save-excursion
+                                      ;; don't propagate
+                                      ;; interactive args, if any
+                                      (inferior-erlang nil))
+                                    (get-buffer "*erlang*")))
                    (erlang-dir (concat (file-name-directory (buffer-file-name))
-                                       "gen/erl"))
+                                       "gen/erl/absmodel"))
                    (module (abs--guess-module))
-                   (debug-output abs-debug-output))
+                   (clock-limit abs-clock-limit)
+                   (port abs-local-port))
                (with-current-buffer erlang-buffer
                  (comint-send-string erlang-buffer
                                      (concat "cd (\"" erlang-dir "\").\n"))
-                 (comint-send-string erlang-buffer "make:all([load]).\n")
                  (comint-send-string erlang-buffer
                                      (concat "code:add_paths([\""
                                              erlang-dir "/ebin\", \""
                                              erlang-dir "/deps/cowboy/ebin\", \""
                                              erlang-dir "/deps/cowlib/ebin\", \""
+                                             erlang-dir "/deps/jsx/ebin\", \""
                                              erlang-dir "/deps/ranch/ebin\"]).\n"))
+                 (comint-send-string erlang-buffer "make:all([load]).\n")
                  (comint-send-string erlang-buffer
                                      (concat "runtime:start(\""
-                                             (when debug-output "-d ")
-                                             module
+                                             (when clock-limit (format " -l %d " clock-limit))
+                                             (when port (format " -p %d " port))
+                                             ;; FIXME: reinstate `module' arg
+                                             ;; once abs--guess-module doesn't
+                                             ;; pick a module w/o main block
+
+                                             ;; module
                                              "\").\n")))
                (pop-to-buffer erlang-buffer)))
     (`java (let ((java-buffer (save-excursion (shell "*abs java*")))
@@ -445,7 +472,7 @@ value.")
     (other (error "Don't know how to run with target %s" backend))))
 
 (defun abs-next-action (flag)
-  "Compile the buffer or load it into Maude.
+  "Compile or execute the buffer.
 
 The language backend for compilation can be chosen by giving a
 `C-u' prefix to this command.  The default backend is set via
@@ -453,13 +480,17 @@ customizing or setting `abs-target-language' and can be
 overridden for a specific abs file by giving a file-local value
 via `add-file-local-variable'.
 
-To execute on the Maude backend, remember to make
-`abs-interpreter.maude' accessible to Maude, either by copying or
-symlinking that file to the current directory, or via the
-`MAUDE_LIB' environment variable.
+To compile or run a model that consists of more than one file,
+set `abs-input-files' to a list of filenames.
+
+To execute on the Maude backend, make sure that Maude and the
+Maude Emacs mode are installed.
 
 To execute on the Java backend, set `abs-java-classpath' to
 include the file absfrontend.jar.
+
+To execute on the Erlang backend, make sure that Erlang and the
+Erlang Emacs mode are installed.
 
 Argument FLAG will prompt for language backend to use if 1."
   (interactive "p")
@@ -517,12 +548,21 @@ Returns point.  Purely whitespace and comment lines are skipped."
   (back-to-indentation)
   (point))
 
+(defun abs--up-until-line-changes ()
+  (let* ((start-line (line-number-at-pos))
+         (point (point)))
+    (while (and (ignore-errors (up-list) t)
+                (= start-line (line-number-at-pos)))
+      (setq point (point)))
+    point))
+
 (defun abs--calculate-indentation ()
   (let* ((this-parse-status (save-excursion 
                               (syntax-ppss (line-beginning-position))))
-         (prev-parse-status (save-excursion 
-                              (syntax-ppss (abs--prev-code-line))))
-         (end-parse-status (save-excursion (syntax-ppss (line-end-position))))
+         (prev-parse-status (save-excursion
+                              (abs--prev-code-line)
+                              (syntax-ppss (abs--up-until-line-changes))))
+         (end-parse-status (save-excursion (syntax-ppss (abs--up-until-line-changes))))
          (prev-line-indent (save-excursion (abs--prev-code-line)
                                            (current-indentation)))
          (depth-difference-prev-line (- (nth 0 this-parse-status)
@@ -539,7 +579,7 @@ Returns point.  Purely whitespace and comment lines are skipped."
      ((> depth-difference-this-line 0)   ; closing paren here
       (- prev-line-indent (* abs-indent depth-difference-this-line)))
      (t                        ; Default: indent like the previous line.
-      (save-excursion (abs--prev-code-line) (current-indentation))))))
+      prev-line-indent))))
 
 (defun abs-indent-line ()
   "Indent the current line as Abs code.
@@ -605,12 +645,7 @@ The following keys are set:
      ["Timed interpreter"
       (setq abs-use-timed-interpreter (not abs-use-timed-interpreter))
       :active t :style toggle
-      :selected abs-use-timed-interpreter])
-    ("Erlang Backend Options"
-     ["Debugging output"
-      (setq abs-debug-output (not abs-debug-output))
-      :active t :style toggle
-      :selected abs-debug-output])))
+      :selected abs-use-timed-interpreter])))
 
 (unless (assoc "\\.abs\\'" auto-mode-alist)
   (add-to-list 'auto-mode-alist '("\\.abs\\'" . abs-mode)))

@@ -15,7 +15,7 @@ import org.junit.Test;
 import abs.ABSTest;
 import abs.frontend.FrontendTest;
 import abs.frontend.analyser.ErrorMessage;
-import abs.frontend.analyser.SemanticErrorList;
+import abs.frontend.analyser.SemanticConditionList;
 import abs.frontend.ast.*;
 import abs.frontend.typechecker.*;
 import abs.frontend.typechecker.KindedName.Kind;
@@ -32,6 +32,16 @@ public class TypeCheckerTest extends FrontendTest {
     @Test
     public void lizeth() throws Exception {
         assertTypeCheckFileOk("tests/abssamples/lizeth.abs", false);
+    }
+    
+    @Test
+    public void rosetreeTicket187() throws Exception {
+        assertTypeCheckFileOk("tests/abssamples/RoseTree.abs", true);
+    }
+
+    @Test
+    public void subtypingTicket188() throws Exception {
+        assertTypeCheckFileOk("tests/abssamples/Subtyping.abs", true);
     }
 
     @Test
@@ -443,9 +453,9 @@ public class TypeCheckerTest extends FrontendTest {
     @Test
     public void test_Movecogto1() {
         Model m = assertParseOk("class C { Unit do() { movecogto 1; }}", Config.WITH_STD_LIB);
-        SemanticErrorList errs = m.typeCheck();
+        SemanticConditionList errs = m.typeCheck();
         assertTrue(m.hasTypeErrors());
-        assertEquals(ErrorMessage.EXPECTED_DC, errs.getFirst().msg);
+        assertEquals(ErrorMessage.EXPECTED_DC, errs.getFirstError().msg);
     }
 
     @Test

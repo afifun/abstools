@@ -34,6 +34,9 @@ public class ErlangTestDriver extends ABSTest implements BackendTestDriver {
     }
 
     public static boolean checkErlang() {
+        /* TODO: Should be checked earlier instead, before configuring the JUnit suites. */
+        String doAbs = System.getProperty("abs.junit.erlang");
+        Assume.assumeFalse("Erlang tests disabled via -Dabs.junit.erlang", "0".equals(doAbs));
         if (SemanticTests.checkProg("erl")) {
             // http://stackoverflow.com/a/9561398/60462
             ProcessBuilder pb = new ProcessBuilder("erl", "-eval", "erlang:display(erlang:system_info(otp_release)), halt().",  "-noshell");
@@ -104,7 +107,7 @@ public class ErlangTestDriver extends ABSTest implements BackendTestDriver {
         try {
             f = Files.createTempDir();
             f.deleteOnExit();
-            genCode(model, f, false);
+            genCode(model, f, true);
             make(f);
         } finally {
             try {
@@ -127,17 +130,17 @@ public class ErlangTestDriver extends ABSTest implements BackendTestDriver {
      */
     private String genCode(Model model, File targetDir, boolean appendResultprinter) throws IOException, InterruptedException, InternalBackendException {
         if (model.hasErrors()) {
-            Assert.fail(model.getErrors().getFirst().getHelpMessage());
+            Assert.fail(model.getErrors().getFirstError().getHelpMessage());
         }
         if (model.hasTypeErrors()) {
-            Assert.fail(model.getTypeErrors().getFirst().getHelpMessage());
+            Assert.fail(model.getTypeErrors().getFirstError().getHelpMessage());
         }
         MainBlock mb = model.getMainBlock();
         if (mb != null && appendResultprinter) {
             mb.addStmt(new ReturnStmt(new List<Annotation>(),
                                       new VarUse("testresult")));
         }
-        ErlangBackend.compile(model, targetDir, false);
+        ErlangBackend.compile(model, targetDir, true);
         if (mb == null)
             return null;
         else

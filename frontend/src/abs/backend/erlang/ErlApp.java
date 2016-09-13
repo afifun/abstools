@@ -48,12 +48,12 @@ public class ErlApp {
     public ErlApp(File destDir) throws IOException {
         super();
         this.destDir = destDir;
-        this.destCodeDir = new File(destDir, "src/");
-        this.destIncludeDir = new File(destDir, "include/");
+        this.destCodeDir = new File(destDir, "absmodel/src/");
+        this.destIncludeDir = new File(destDir, "absmodel/include/");
         destDir.mkdirs();
         FileUtils.cleanDirectory(destDir);
         destDir.mkdirs();
-        new File(destDir, "ebin").mkdir();
+        new File(destDir, "absmodel/ebin").mkdir();
         copyRuntime();
     }
 
@@ -92,22 +92,28 @@ public class ErlApp {
     }
 
     private static final Set<String> RUNTIME_FILES = ImmutableSet.of(
-            "src/*",
-            "include/*",
-            "deps/*",
-            "Emakefile",
-            "Makefile",
+            "absmodel/src/*",
+            "absmodel/include/*",
+            "absmodel/deps/*",
+            "absmodel/priv/*",
+            "absmodel/priv/static/*",
+            // do not copy this since absmodulename.hrl is generated later --
+            // runtime.erl and main_app.erl use the wrong constant
+            // "absmodel/ebin/*",
+            "absmodel/Emakefile",
             "Dockerfile",
             "start_console",
             "run",
-            "rebar.config",
+            "absmodel/rebar.config",
             "gcstats_as_csv.erl",
-            "bin/*"
+            "bin/*",
+            "link_sources"
             );
     private static final Set<String> EXEC_FILES = ImmutableSet.of(
             "bin/rebar",
             "run",
-            "start_console"
+            "start_console",
+            "link_sources"
             );
         
     private static final String RUNTIME_PATH = "abs/backend/erlang/runtime/";
