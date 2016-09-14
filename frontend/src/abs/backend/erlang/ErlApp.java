@@ -102,12 +102,14 @@ public class ErlApp {
             "run",
             "rebar.config",
             "gcstats_as_csv.erl",
-            "bin/*"
+            "bin/*",
+            "link_sources"
             );
     private static final Set<String> EXEC_FILES = ImmutableSet.of(
             "bin/rebar",
             "run",
-            "start_console"
+            "start_console",
+            "link_sources"
             );
         
     private static final String RUNTIME_PATH = "abs/backend/erlang/runtime/";
@@ -180,20 +182,5 @@ public class ErlApp {
         hcs.println("-undef(ABSMAINMODULE).");
         hcs.println("-define(ABSMAINMODULE," + erlModulename + ").");
         hcs.close();
-
-        CodeStream acs = new CodeStream(new File(destCodeDir, erlModulename + ".app.src"));
-        acs.println("{application, " + erlModulename + ",");
-        acs.println(" [");
-        acs.println("  {description, \"Generated code for ABS module '" + absModulename + "'\"},");
-        acs.println("  {vsn, \"1\"},");
-        acs.println("  {registered, []},");
-        acs.println("  {applications, [");
-        acs.println("                  kernel,");
-        acs.println("                  stdlib");
-        acs.println("                 ]},");
-        acs.println("  {mod, { " + erlModulename + ", []}},");
-        acs.println("  {env, []}");
-        acs.println("]}.");
-        acs.close();
     }
 }

@@ -20,6 +20,7 @@ import org.junit.Assume;
 
 import abs.ABSTest;
 import abs.backend.BackendTestDriver;
+import abs.backend.common.InternalBackendException;
 import abs.backend.common.SemanticTests;
 import abs.frontend.ast.*;
 
@@ -103,7 +104,7 @@ public class ErlangTestDriver extends ABSTest implements BackendTestDriver {
         try {
             f = Files.createTempDir();
             f.deleteOnExit();
-            genCode(model, f, false);
+            genCode(model, f, true);
             make(f);
         } finally {
             try {
@@ -121,19 +122,22 @@ public class ErlangTestDriver extends ABSTest implements BackendTestDriver {
      * statement, which will then be the result of the execution
      * 
      * @return the Module Name, which contains the Main Block
+     * @throws InternalBackendException 
      * 
      */
-    private String genCode(Model model, File targetDir, boolean appendResultprinter) throws IOException, InterruptedException {
+    private String genCode(Model model, File targetDir, boolean appendResultprinter) throws IOException, InterruptedException, InternalBackendException {
         if (model.hasErrors()) {
             Assert.fail(model.getErrors().getFirst().getHelpMessage());
         }
         if (model.hasTypeErrors()) {
             Assert.fail(model.getTypeErrors().getFirst().getHelpMessage());
         }
-        MainBlock mb = (MainBlock) model.getCompilationUnit(1).getMainBlock();
-        if (appendResultprinter)
-            mb.setStmt(new ReturnStmt(new List<Annotation>(), new VarUse("testresult")), mb.getNumStmt());
-        ErlangBackend.compile(model, targetDir);
+        MainBlock mb = model.getMainBlock();
+        if (mb != null && appendResultprinter) {
+            mb.addStmt(new ReturnStmt(new List<Annotation>(),
+                                      new VarUse("testresult")));
+        }
+        ErlangBackend.compile(model, targetDir, true);
         if (mb == null)
             return null;
         else
